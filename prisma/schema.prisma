@@ -1,0 +1,278 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum TaskStatus {
+  ACTIVE
+  WAITING_CONFIRMATION
+  COMPLETED
+  FAILED
+}
+
+enum TaskType {
+  CHALLENGE
+  SHARED
+}
+
+enum SharedSplitStatus {
+  NONE
+  PROPOSED
+  AGREED
+}
+
+enum TaskRecurrenceType {
+  NONE
+  EVERY_X_DAYS
+  WEEKLY
+  MONTHLY
+}
+
+enum TransactionType {
+  EXPENSE
+  INCOME
+}
+
+enum TransactionScope {
+  SELF
+  PARTNER
+  SHARED
+}
+
+enum TransactionCategory {
+  FOOD
+  UTILITIES
+  TRANSPORT
+  HOME
+  ENTERTAINMENT
+  HEALTH
+  SHOPPING
+  SUBSCRIPTIONS
+  SALARY
+  BONUS
+  GIFT
+  REFUND
+  SIDE_JOB
+  OTHER
+}
+
+enum TransactionStatus {
+  PENDING_CONFIRMATION
+  CONFIRMED
+  REJECTED
+}
+
+enum NotificationType {
+  REWARD_PURCHASE
+}
+
+enum WishlistPriority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum BlueprintType {
+  TASK
+  EVENT
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  points    Int      @default(100)
+  nickname  String?
+  avatarKey String?
+  avatarUrl String?
+  winStreak Int      @default(0)
+  lastWeeklyPointsAt DateTime?
+  createdAt DateTime @default(now())
+
+  pairId String?
+  pair   Pair?    @relation(fields: [pairId], references: [id], onDelete: SetNull)
+
+  createdTasks  Task[] @relation("CreatedTasks")
+  assignedTasks Task[] @relation("AssignedTasks")
+  completionRequestedTasks Task[] @relation("CompletionRequestedTasks")
+  proposedSharedTasks Task[] @relation("ProposedSplitTasks")
+  createdEvents Event[] @relation("CreatedEvents")
+  createdTransactions Transaction[] @relation("CreatedTransactions")
+  confirmedTransactions Transaction[] @relation("ConfirmedTransactions")
+  rejectedTransactions Transaction[] @relation("RejectedTransactions")
+  createdWishlistItems WishlistItem[] @relation("CreatedWishlistItems")
+  rewardPurchases RewardPurchase[]
+  createdBlueprints Blueprint[] @relation("CreatedBlueprints")
+  notifications Notification[]
+}
+
+model Pair {
+  id        String   @id @default(uuid())
+  joinCode  String   @unique
+  createdAt DateTime @default(now())
+
+  users User[]
+  tasks Task[]
+  events Event[]
+  transactions Transaction[]
+  wishlistItems WishlistItem[]
+  rewardPurchases RewardPurchase[]
+  blueprints Blueprint[]
+  notifications Notification[]
+}
+
+model Task {
+  id           String     @id @default(uuid())
+  title        String
+  bank         Int
+  type         TaskType   @default(CHALLENGE)
+  status       TaskStatus @default(ACTIVE)
+  sharedSplitStatus SharedSplitStatus @default(NONE)
+  assignedToId String?
+  createdById  String
+  completionRequestedById String?
+  proposedById String?
+  proposedUser1Points Int?
+  proposedUser2Points Int?
+  pairId       String
+  dueDate      DateTime?
+  recurrenceType TaskRecurrenceType @default(NONE)
+  recurrenceInterval Int?
+  recurrenceParentId String?
+  createdAt    DateTime   @default(now())
+
+  assignedTo User? @relation("AssignedTasks", fields: [assignedToId], references: [id], onDelete: Restrict)
+  createdBy  User @relation("CreatedTasks", fields: [createdById], references: [id], onDelete: Restrict)
+  completionRequestedBy User? @relation("CompletionRequestedTasks", fields: [completionRequestedById], references: [id], onDelete: SetNull)
+  proposedBy User? @relation("ProposedSplitTasks", fields: [proposedById], references: [id], onDelete: SetNull)
+  pair       Pair @relation(fields: [pairId], references: [id], onDelete: Cascade)
+
+  @@index([pairId, createdAt])
+  @@index([completionRequestedById])
+  @@index([proposedById])
+}
+
+model Event {
+  id          String   @id @default(uuid())
+  title       String
+  description String?
+  date        DateTime
+  recurrenceType TaskRecurrenceType @default(NONE)
+  recurrenceInterval Int?
+  recurrenceParentId String?
+  pairId      String
+  createdById String
+  createdAt   DateTime @default(now())
+
+  pair      Pair @relation(fields: [pairId], references: [id], onDelete: Cascade)
+  createdBy User @relation("CreatedEvents", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([pairId, date])
+}
+
+model Transaction {
+  id          String              @id @default(uuid())
+  title       String
+  amount      Float
+  type        TransactionType
+  category    TransactionScope
+  transactionCategory TransactionCategory @default(OTHER)
+  status      TransactionStatus @default(CONFIRMED)
+  createdById String
+  confirmedById String?
+  rejectedById String?
+  pairId      String
+  createdAt   DateTime            @default(now())
+
+  createdBy User @relation("CreatedTransactions", fields: [createdById], references: [id], onDelete: Restrict)
+  confirmedBy User? @relation("ConfirmedTransactions", fields: [confirmedById], references: [id], onDelete: SetNull)
+  rejectedBy User? @relation("RejectedTransactions", fields: [rejectedById], references: [id], onDelete: SetNull)
+  pair      Pair @relation(fields: [pairId], references: [id], onDelete: Cascade)
+
+  @@index([pairId, createdAt])
+  @@index([status])
+}
+
+model WishlistItem {
+  id          String              @id @default(uuid())
+  title       String
+  url         String?
+  price       Float?
+  priority    WishlistPriority
+  category    TransactionScope
+  isPurchased Boolean             @default(false)
+  createdById String
+  pairId      String
+  createdAt   DateTime            @default(now())
+
+  createdBy User @relation("CreatedWishlistItems", fields: [createdById], references: [id], onDelete: Restrict)
+  pair      Pair @relation(fields: [pairId], references: [id], onDelete: Cascade)
+
+  @@index([pairId, createdAt])
+}
+
+model Reward {
+  id          String   @id @default(uuid())
+  title       String
+  description String?
+  cost        Int
+  minStreak   Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  purchases RewardPurchase[]
+}
+
+model RewardPurchase {
+  id        String   @id @default(uuid())
+  rewardId  String
+  userId    String
+  pairId    String
+  createdAt DateTime @default(now())
+
+  reward Reward @relation(fields: [rewardId], references: [id], onDelete: Restrict)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
+  pair   Pair   @relation(fields: [pairId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([pairId, createdAt])
+}
+
+model Blueprint {
+  id             String        @id @default(uuid())
+  title          String
+  description    String?
+  type           BlueprintType
+  defaultPoints  Int?
+  defaultDueTime String?
+  defaultTime    String?
+  createdById    String
+  pairId         String
+  createdAt      DateTime      @default(now())
+
+  createdBy User @relation("CreatedBlueprints", fields: [createdById], references: [id], onDelete: Restrict)
+  pair      Pair @relation(fields: [pairId], references: [id], onDelete: Cascade)
+
+  @@index([pairId, createdAt])
+}
+
+model Notification {
+  id        String           @id @default(uuid())
+  title     String
+  message   String
+  type      NotificationType
+  userId    String
+  pairId    String
+  isRead    Boolean          @default(false)
+  createdAt DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pair Pair @relation(fields: [pairId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead, createdAt])
+  @@index([pairId, createdAt])
+}

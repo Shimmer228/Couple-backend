@@ -1,0 +1,22 @@
+node_modules
+# Keep environment variables out of version control
+.env
+
+/src/generated/prisma
+# Gradle / Android local caches
+.gradle/
+.gradle-local/
+build/
+app/build/
+
+# IDE
+.idea/
+*.iml
+
+# Backend
+node_modules/
+dist/
+uploads/
+
+# Logs
+*.log
