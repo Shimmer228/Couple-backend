@@ -1,3 +1,19 @@
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+/couple-app-backend/dist
 node_modules
 # Keep environment variables out of version control
 .env
@@ -16,7 +32,6 @@ app/build/
 # Backend
 node_modules/
 dist/
-uploads/
 
 # Logs
 *.log
