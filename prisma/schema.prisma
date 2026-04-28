@@ -70,6 +70,12 @@ enum NotificationType {
   REWARD_PURCHASE
 }
 
+enum PointEarningSource {
+  WEEKLY_ALLOWANCE
+  CHALLENGE_REWARD
+  SHARED_REWARD
+}
+
 enum WishlistPriority {
   LOW
   MEDIUM
@@ -108,6 +114,7 @@ model User {
   rewardPurchases RewardPurchase[]
   createdBlueprints Blueprint[] @relation("CreatedBlueprints")
   notifications Notification[]
+  pointEarnings PointEarning[]
 }
 
 model Pair {
@@ -123,6 +130,7 @@ model Pair {
   rewardPurchases RewardPurchase[]
   blueprints Blueprint[]
   notifications Notification[]
+  pointEarnings PointEarning[]
 }
 
 model Task {
@@ -274,5 +282,20 @@ model Notification {
   pair Pair @relation(fields: [pairId], references: [id], onDelete: Cascade)
 
   @@index([userId, isRead, createdAt])
+  @@index([pairId, createdAt])
+}
+
+model PointEarning {
+  id        String             @id @default(uuid())
+  userId    String
+  pairId    String?
+  source    PointEarningSource
+  amount    Int
+  createdAt DateTime           @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pair Pair? @relation(fields: [pairId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
   @@index([pairId, createdAt])
 }

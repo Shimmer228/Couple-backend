@@ -6,6 +6,7 @@ import {
   confirmCompletion,
   createTask,
   deleteTask,
+  deleteTaskSeries,
   failTask,
   getTasks,
   proposeSharedSplit,
@@ -21,6 +22,7 @@ router.use(authenticate);
 
 router.get("/", getTasks);
 router.post("/create", createTask);
+router.delete("/series/:id", deleteTaskSeries);
 router.put("/:id", updateTask);
 router.delete("/:id", deleteTask);
 router.post("/request-completion/:id", requestCompletion);

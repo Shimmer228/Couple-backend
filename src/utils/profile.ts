@@ -23,8 +23,7 @@ export const normalizeOptionalNickname = (value: unknown) => {
 
 type WinnerCandidate = {
   id: string;
-  points: number;
-  winStreak: number;
+  weeklyPointsEarned: number;
 };
 
 export const getWeeklyWinnerId = (users: WinnerCandidate[]) => {
@@ -33,18 +32,14 @@ export const getWeeklyWinnerId = (users: WinnerCandidate[]) => {
   }
 
   const [first, second] = [...users].sort((left, right) => {
-    if (right.points !== left.points) {
-      return right.points - left.points;
-    }
-
-    return right.winStreak - left.winStreak;
+    return right.weeklyPointsEarned - left.weeklyPointsEarned;
   });
 
   if (!first || !second) {
     return null;
   }
 
-  if (first.points === second.points && first.winStreak === second.winStreak) {
+  if (first.weeklyPointsEarned === second.weeklyPointsEarned) {
     return null;
   }
 

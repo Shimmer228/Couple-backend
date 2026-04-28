@@ -1,8 +1,9 @@
 import { Response } from "express";
-import { Prisma, SharedSplitStatus, TaskRecurrenceType, TaskStatus, TaskType } from "../../node_modules/.prisma/client";
+import { PointEarningSource, Prisma, SharedSplitStatus, TaskRecurrenceType, TaskStatus, TaskType } from "../../node_modules/.prisma/client";
 import { prisma } from "../config/prisma";
 import { AuthenticatedRequest } from "../types/auth-request";
 import { parseOptionalDate } from "../utils/date";
+import { recordPointEarning } from "../utils/weekly-points";
 
 export const taskDetailsInclude = {
   createdBy: {
@@ -167,6 +168,14 @@ const getTaskForPair = async (tx: Prisma.TransactionClient, taskId: string, pair
 
   return task;
 };
+
+const getRecurringRootTaskId = (task: { id: string; recurrenceParentId: string | null }) =>
+  task.recurrenceParentId ?? task.id;
+
+const isRecurringTask = (task: {
+  recurrenceType: TaskRecurrenceType;
+  recurrenceParentId: string | null;
+}) => task.recurrenceType !== TaskRecurrenceType.NONE || task.recurrenceParentId !== null;
 
 const ensureChallengeTask = (task: TaskContext) => {
   if (task.type !== TaskType.CHALLENGE) {
@@ -611,6 +620,10 @@ const sendTaskError = (res: Response, error: unknown) => {
       return res.status(400).json({ message: "Invalid task type" });
     }
 
+    if (error.message === "TASK_NOT_RECURRING") {
+      return res.status(400).json({ message: "Only recurring tasks can be cancelled as a series" });
+    }
+
     if (error.message === "CHALLENGE_TASK_REQUIRED") {
       return res.status(400).json({ message: "This action is only available for challenge tasks" });
     }
@@ -836,6 +849,105 @@ export const deleteTask = async (req: AuthenticatedRequest, res: Response) => {
   }
 };
 
+export const deleteTaskSeries = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.userId;
+    const taskId = String(req.params.id ?? "");
+
+    if (!userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      const user = await getUserContext(tx, userId);
+      const task = await getTaskForPair(tx, taskId, user.pairId);
+      const rootTaskId = getRecurringRootTaskId(task);
+      const rootTask = await getTaskForPair(tx, rootTaskId, user.pairId);
+
+      if (rootTask.createdById !== userId) {
+        throw new Error("FORBIDDEN_CREATOR_ACTION");
+      }
+
+      if (!isRecurringTask(rootTask)) {
+        throw new Error("TASK_NOT_RECURRING");
+      }
+
+      const cancellableTasks = await tx.task.findMany({
+        where: {
+          pairId: user.pairId,
+          status: TaskStatus.ACTIVE,
+          OR: [{ id: rootTaskId }, { recurrenceParentId: rootTaskId }],
+        },
+        select: {
+          id: true,
+          bank: true,
+          type: true,
+        },
+      });
+
+      const refundAmount = cancellableTasks.reduce((total, recurringTask) => {
+        if (recurringTask.type !== TaskType.CHALLENGE) {
+          return total;
+        }
+
+        return total + recurringTask.bank;
+      }, 0);
+
+      let currentUserPoints = user.points;
+      if (refundAmount > 0) {
+        const updatedUser = await tx.user.update({
+          where: { id: userId },
+          data: {
+            points: {
+              increment: refundAmount,
+            },
+          },
+          select: {
+            points: true,
+          },
+        });
+
+        currentUserPoints = updatedUser.points;
+      }
+
+      if (cancellableTasks.length > 0) {
+        await tx.task.deleteMany({
+          where: {
+            id: {
+              in: cancellableTasks.map((recurringTask) => recurringTask.id),
+            },
+          },
+        });
+      }
+
+      const rootStillExists = await tx.task.findUnique({
+        where: { id: rootTaskId },
+        select: { id: true },
+      });
+
+      if (rootStillExists) {
+        await tx.task.update({
+          where: { id: rootTaskId },
+          data: {
+            recurrenceType: TaskRecurrenceType.NONE,
+            recurrenceInterval: null,
+          },
+        });
+      }
+
+      return {
+        rootTaskId,
+        deletedCount: cancellableTasks.length,
+        currentUserPoints,
+      };
+    });
+
+    return res.json(result);
+  } catch (error) {
+    return sendTaskError(res, error);
+  }
+};
+
 export const requestCompletion = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const userId = req.userId;
@@ -909,6 +1021,13 @@ export const confirmCompletion = async (req: AuthenticatedRequest, res: Response
             increment: 1,
           },
         },
+      });
+
+      await recordPointEarning(tx, {
+        userId: task.completionRequestedById,
+        pairId: user.pairId,
+        source: PointEarningSource.CHALLENGE_REWARD,
+        amount: task.bank,
       });
 
       const updatedCurrentUser = await tx.user.update({
@@ -1093,6 +1212,13 @@ export const failTask = async (req: AuthenticatedRequest, res: Response) => {
         },
       });
 
+      await recordPointEarning(tx, {
+        userId: partner.id,
+        pairId: user.pairId,
+        source: PointEarningSource.CHALLENGE_REWARD,
+        amount: task.bank,
+      });
+
       const updatedTask = await tx.task.update({
         where: { id: task.id },
         data: {
@@ -1205,6 +1331,13 @@ export const acceptSharedSplit = async (req: AuthenticatedRequest, res: Response
         },
       });
 
+      await recordPointEarning(tx, {
+        userId: pairUsers[0].id,
+        pairId: user.pairId,
+        source: PointEarningSource.SHARED_REWARD,
+        amount: task.proposedUser1Points,
+      });
+
       await tx.user.update({
         where: { id: pairUsers[1].id },
         data: {
@@ -1212,6 +1345,13 @@ export const acceptSharedSplit = async (req: AuthenticatedRequest, res: Response
             increment: task.proposedUser2Points,
           },
         },
+      });
+
+      await recordPointEarning(tx, {
+        userId: pairUsers[1].id,
+        pairId: user.pairId,
+        source: PointEarningSource.SHARED_REWARD,
+        amount: task.proposedUser2Points,
       });
 
       const updatedTask = await tx.task.update({

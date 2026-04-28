@@ -4,6 +4,7 @@ import { prisma } from "../config/prisma";
 import { AuthenticatedRequest } from "../types/auth-request";
 import { deleteLocalAvatarFile, buildAvatarUrl } from "../utils/avatar-storage";
 import { getWeeklyWinnerId, normalizeOptionalNickname, parseAvatarKey } from "../utils/profile";
+import { getCurrentWeekStart } from "../utils/weekly-points";
 
 const purchaseHistoryInclude = {
   reward: {
@@ -45,21 +46,60 @@ const partnerProfileSelect = {
   pairId: true,
 } satisfies Prisma.UserSelect;
 
-const getWinnerIdForPair = async (pairId: string | null) => {
+type WeeklyLeaderboardEntry = {
+  userId: string;
+  label: string;
+  weeklyPointsEarned: number;
+};
+
+const getWeeklyLeaderboardForPair = async (pairId: string | null) => {
   if (!pairId) {
-    return null;
+    return {
+      winnerId: null as string | null,
+      weeklyLeaderboard: [] as WeeklyLeaderboardEntry[],
+    };
   }
 
   const pairUsers = await prisma.user.findMany({
     where: { pairId },
     select: {
       id: true,
-      points: true,
-      winStreak: true,
+      email: true,
+      nickname: true,
+      avatarKey: true,
     },
   });
 
-  return getWeeklyWinnerId(pairUsers);
+  const earnings = await prisma.pointEarning.groupBy({
+    by: ["userId"],
+    where: {
+      pairId,
+      createdAt: {
+        gte: getCurrentWeekStart(),
+      },
+    },
+    _sum: {
+      amount: true,
+    },
+  });
+
+  const earningsByUserId = new Map(
+    earnings.map((entry) => [entry.userId, entry._sum.amount ?? 0])
+  );
+
+  const weeklyLeaderboard = pairUsers
+    .map((pairUser) => ({
+      id: pairUser.id,
+      userId: pairUser.id,
+      label: pairUser.nickname?.trim() || pairUser.email,
+      weeklyPointsEarned: earningsByUserId.get(pairUser.id) ?? 0,
+    }))
+    .sort((left, right) => right.weeklyPointsEarned - left.weeklyPointsEarned);
+
+  return {
+    winnerId: getWeeklyWinnerId(weeklyLeaderboard),
+    weeklyLeaderboard,
+  };
 };
 
 const buildProfileResponse = async (user: {
@@ -67,11 +107,14 @@ const buildProfileResponse = async (user: {
   pairId: string | null;
   [key: string]: unknown;
 }) => {
-  const winnerId = await getWinnerIdForPair(user.pairId);
+  const weeklyData = await getWeeklyLeaderboardForPair(user.pairId);
+  const leaderboardEntry = weeklyData.weeklyLeaderboard.find((entry) => entry.userId === user.id);
 
   return {
     ...user,
-    isWeeklyWinner: winnerId === user.id,
+    weeklyPointsEarned: leaderboardEntry?.weeklyPointsEarned ?? 0,
+    weeklyLeaderboard: weeklyData.weeklyLeaderboard,
+    isWeeklyWinner: weeklyData.winnerId === user.id,
   };
 };
 

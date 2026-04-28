@@ -283,6 +283,14 @@ const getEventForPair = async (eventId: string, pairId: string) => {
   return event;
 };
 
+const getRecurringRootEventId = (event: { id: string; recurrenceParentId: string | null }) =>
+  event.recurrenceParentId ?? event.id;
+
+const isRecurringEvent = (event: {
+  recurrenceType: TaskRecurrenceType;
+  recurrenceParentId: string | null;
+}) => event.recurrenceType !== TaskRecurrenceType.NONE || event.recurrenceParentId !== null;
+
 const sendEventError = (res: Response, error: unknown) => {
   if (error instanceof Error) {
     if (error.message === "USER_NOT_FOUND") {
@@ -311,6 +319,10 @@ const sendEventError = (res: Response, error: unknown) => {
 
     if (error.message === "EVENT_UPDATE_REQUIRED") {
       return res.status(400).json({ message: "Provide a title, description, or date to update" });
+    }
+
+    if (error.message === "EVENT_NOT_RECURRING") {
+      return res.status(400).json({ message: "Only recurring events can be cancelled as a series" });
     }
 
     if (error.message === "INVALID_RECURRENCE_TYPE") {
@@ -429,6 +441,48 @@ export const deleteEvent = async (req: AuthenticatedRequest, res: Response) => {
     });
 
     return res.json({ deletedId: event.id });
+  } catch (error) {
+    return sendEventError(res, error);
+  }
+};
+
+export const deleteEventSeries = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.userId;
+    const eventId = String(req.params.id ?? "");
+
+    if (!userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      const user = await getCurrentUserContext(userId);
+      const event = await getEventForPair(eventId, user.pairId!);
+      const rootEventId = getRecurringRootEventId(event);
+      const rootEvent = await getEventForPair(rootEventId, user.pairId!);
+
+      if (rootEvent.createdById !== userId) {
+        throw new Error("FORBIDDEN_EVENT_ACTION");
+      }
+
+      if (!isRecurringEvent(rootEvent)) {
+        throw new Error("EVENT_NOT_RECURRING");
+      }
+
+      const deleted = await tx.event.deleteMany({
+        where: {
+          pairId: user.pairId!,
+          OR: [{ id: rootEventId }, { recurrenceParentId: rootEventId }],
+        },
+      });
+
+      return {
+        rootEventId,
+        deletedCount: deleted.count,
+      };
+    });
+
+    return res.json(result);
   } catch (error) {
     return sendEventError(res, error);
   }
